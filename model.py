@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 class OsuAimModel(nn.Module):
-    def __init__(self, input_size=10, hidden_size=1024, num_layers=3):
+    def __init__(self, input_size=10, hidden_size=512, num_layers=3):
         super(OsuAimModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
