@@ -1,0 +1,57 @@
+{
+  "name": "@tosu/ingame-overlay",
+  "version": "4.26.2",
+  "description": "High performance tosu ingame overlay",
+  "private": true,
+  "main": "./dist/src/index.js",
+  "scripts": {
+    "build": "electron-vite build",
+    "dev": "electron-vite dev",
+    "watch": "electron-vite dev --watch",
+    "dist": "npm run build && electron-builder --windows"
+  },
+  "keywords": [],
+  "author": "storycraft <storycraft@pancake.sh>",
+  "dependencies": {
+    "@asdf-overlay/core": "^2.0.12",
+    "@asdf-overlay/electron": "^2.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.4",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.7",
+    "electron-builder-squirrel-windows": "26.15.7",
+    "electron-vite": "^5.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.6"
+  },
+  "build": {
+    "productName": "tosu-ingame-overlay",
+    "asar": true,
+    "files": [
+      "dist"
+    ],
+    "electronLanguages": "en-US",
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "./assets/tosu.ico"
+    },
+    "directories": {
+      "output": "./pack/",
+      "app": "."
+    },
+    "publish": {
+      "provider": "github"
+    }
+  },
+  "os": [
+    "win32"
+  ]
+}

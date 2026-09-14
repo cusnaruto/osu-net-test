@@ -1,0 +1,13 @@
+{
+  "name": "@tosu/common",
+  "private": "true",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "",
+  "main": "index.ts",
+  "scripts": {},
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "dotenv": "^16.6.1"
+  }
+}

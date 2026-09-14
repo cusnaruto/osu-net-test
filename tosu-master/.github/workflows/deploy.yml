@@ -1,0 +1,118 @@
+name: build & deploy
+
+on:
+  push:
+    branches: [ "master" ]
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/**/*"
+      - "packages/**/*"
+      - "package.json"
+      - "pnpm-lock.yaml"
+  pull_request:
+    paths:
+      - ".github/workflows/**/*"
+      - "packages/**/*"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: |
+      github.event_name != 'pull_request' || (
+        !contains(github.event.pull_request.labels.*.name, 'skip ci') &&
+        !contains(github.event.pull_request.labels.*.name, 'skip-ci') &&
+        !contains(github.event.pull_request.title, '[skip ci]') &&
+        !contains(github.event.pull_request.body, '[skip ci]')
+      )
+    strategy:
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    name: "build for ${{ matrix.os }}"
+    steps:
+      - name: 🛎️ - Checkout
+        uses: actions/checkout@v7
+
+      - name: 📐 - Define variables (1)
+        if: github.event_name == 'pull_request'
+        id: set-pr-sha
+        shell: bash
+        run: echo "SHORT_PR_SHA=$(git rev-parse HEAD | cut -c 1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: 🛠️ - Install Node
+        uses: actions/setup-node@v7
+        with: { node-version: 24.14.0 }
+
+      - name: 🛠️ - Install Deps
+        run: npm install -g pnpm@10.10.0 && pnpm install --frozen-lockfile
+
+      - name: 📦 - Build (windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: pnpm build:win
+
+      - name: 📦 - Build (linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: pnpm build:linux
+
+      - name: 📦 - Build ingame-overlay (windows)
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: pnpm build:overlay
+
+      - name: 📦 - Prepare overlay for upload
+        if: ${{ matrix.os == 'windows-latest' }}
+        shell: bash
+        run: sed -nE "s/.*'([0-9]+\.[0-9]+\.[0-9]+)'.*/\1/p" packages/tosu/src/_version.js > packages/ingame-overlay/pack/win-unpacked/version
+
+      - name: 🚀 - Upload artifacts for windows
+        id: upload-artifact-windows
+        if: ${{ matrix.os == 'windows-latest' }}
+        uses: actions/upload-artifact@v7
+        with: {
+          name: "tosu-windows-${{ steps.set-pr-sha.outputs.SHORT_PR_SHA || github.ref_name }}",
+          path: packages/tosu/dist/tosu.exe
+        }
+      
+      - name: 🚀 - Upload overlay artifacts for windows
+        if: ${{ matrix.os == 'windows-latest' }}
+        uses: actions/upload-artifact@v7
+        with: {
+          name: "tosu-overlay-${{ steps.set-pr-sha.outputs.SHORT_PR_SHA || github.ref_name }}",
+          path: packages/ingame-overlay/pack/win-unpacked/*
+        }
+
+      - name: 🚀 - Upload artifacts for linux
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@v7
+        with: {
+          name: "tosu-linux-${{ steps.set-pr-sha.outputs.SHORT_PR_SHA || github.ref_name }}",
+          path: packages/tosu/dist/tosu
+        }
+
+      - name: ✍️ - Creating sign request to SignPath
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'windows-latest'
+        uses: signpath/github-action-submit-signing-request@v1.1
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '5b025426-9c79-4f04-87e8-64cf64131d0b'
+          project-slug: 'tosu'
+          signing-policy-slug: 'release-signing'
+          github-artifact-id: '${{ steps.upload-artifact-windows.outputs.artifact-id }}'
+
+      # - name: 🚀 - Upload artifacts for mac
+      #   if: matrix.os == 'macos-latest'
+      #   uses: actions/upload-artifact@v3
+      #   with: {
+      #     name: "${{ steps.set-artifact-name.outputs.ARTIFACT_NAME }}",
+      #     path: packages/tosu/dist/tosu.exe
+      #   }

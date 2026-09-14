@@ -1,0 +1,39 @@
+name: PR-check
+
+on:
+  pull_request:
+
+concurrency:
+  group: lint-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    if: |
+      !contains(github.event.pull_request.labels.*.name, 'skip ci') &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-ci') &&
+      !contains(github.event.pull_request.title, '[skip ci]') &&
+      !contains(github.event.pull_request.body, '[skip ci]')
+    runs-on: ubuntu-latest
+    #runs-on: windows-latest
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v7
+
+      - name: Install Node.js 🔧
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.14.0
+
+      - name: Install Deps 🔧
+        run: |
+          npm install -g pnpm@10.10.0
+          pnpm install --frozen-lockfile
+
+      - name: Lint PR (prettier)
+        run: |
+          pnpm run prettier:ci
+
+      - name: Lint PR (eslint)
+        run: |
+          pnpm run lint:ci

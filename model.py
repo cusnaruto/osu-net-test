@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import torch.nn as nn
 
 class OsuAimModel(nn.Module):
     def __init__(self, input_size=10, hidden_size=512, num_layers=3):

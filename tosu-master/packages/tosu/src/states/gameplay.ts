@@ -1,0 +1,605 @@
+import { ClientType, config, measureTime, wLogger } from '@tosu/common';
+import {
+    GradualDifficulty,
+    type ScoreInfoData
+} from '@tosuapp/lazer-calculator-prebuilt';
+
+import { AbstractInstance } from '@/instances';
+import { AbstractState } from '@/states/index';
+import type {
+    KeyOverlayButton,
+    LeaderboardPlayer,
+    Statistics
+} from '@/states/types';
+import { calculateGrade } from '@/utils/calculators';
+import { defaultCalculatedMods } from '@/utils/osuMods';
+import { type CalculateMods, OsuMods } from '@/utils/osuMods.types';
+import { calculateFcScore, calculateMaxAchievableScore } from '@/utils/score';
+
+export const defaultStatistics = {
+    miss: 0,
+    meh: 0,
+    ok: 0,
+    good: 0,
+    great: 0,
+    perfect: 0,
+    smallTickMiss: 0,
+    smallTickHit: 0,
+    largeTickMiss: 0,
+    largeTickHit: 0,
+    smallBonus: 0,
+    largeBonus: 0,
+    ignoreMiss: 0,
+    ignoreHit: 0,
+    comboBreak: 0,
+    sliderTailHit: 0,
+    legacyComboIncrease: 0
+};
+
+const defaultLBPlayer = {
+    name: '',
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    accuracy: 100,
+    mods: Object.assign({}, defaultCalculatedMods),
+    statistics: Object.assign({}, defaultStatistics),
+    team: 0,
+    position: 0,
+    isPassing: false
+} as LeaderboardPlayer;
+
+export class Gameplay extends AbstractState {
+    isDefaultState: boolean = true;
+    isKeyOverlayDefaultState: boolean = true;
+
+    gradualPerformance: GradualDifficulty | undefined;
+
+    failed: boolean;
+
+    retries: number;
+    playerName: string;
+    mods: CalculateMods = Object.assign({}, defaultCalculatedMods);
+    hitErrors: number[] = [];
+    mode: number;
+    maxCombo: number;
+    score: number;
+
+    statistics: Statistics;
+    maximumStatistics: Statistics;
+
+    unstableRate: number;
+    totalHitErrors: number = 0;
+
+    hitMissPrev: number;
+    hitUR: number;
+    hitSB: number;
+    comboPrev: number;
+    combo: number;
+    playerHPSmooth: number;
+    playerHP: number;
+    accuracy: number;
+    gradeCurrent: string;
+    gradeExpected: string;
+    keyOverlay: KeyOverlayButton[];
+    isReplayUiHidden: boolean;
+
+    isLeaderboardVisible: boolean = false;
+    leaderboardPlayer: LeaderboardPlayer;
+    leaderboardScores: LeaderboardPlayer[] = [];
+
+    private cachedkeys: string = '';
+
+    previousState: string = '';
+    previousPlayTime = 0;
+    previousHitErrorIndex = 0;
+
+    constructor(game: AbstractInstance) {
+        super(game);
+
+        this.init();
+    }
+
+    init(isRetry?: boolean, from?: string) {
+        wLogger.debug(
+            `%${ClientType[this.game.client]}%`,
+            `Initializing gameplay state (Retry: %${isRetry}% - From: %${from}%)`
+        );
+
+        this.failed = false;
+
+        this.hitErrors = [];
+        this.totalHitErrors = 0;
+        this.maxCombo = 0;
+        this.score = 0;
+        this.statistics = Object.assign({}, defaultStatistics);
+        this.maximumStatistics = Object.assign({}, defaultStatistics);
+
+        this.hitMissPrev = 0;
+        this.hitUR = 0.0;
+        this.hitSB = 0;
+        this.comboPrev = 0;
+        this.combo = 0;
+        this.playerHPSmooth = 0.0;
+        this.playerHP = 0.0;
+        this.accuracy = 100.0;
+        this.unstableRate = 0;
+        this.gradeCurrent = calculateGrade({
+            isLazer: this.game.client === ClientType.lazer,
+
+            mods: this.mods.array,
+            mode: this.mode,
+            accuracy: this.accuracy,
+
+            statistics: this.statistics
+        });
+
+        this.gradeExpected = this.gradeCurrent;
+        this.keyOverlay = [];
+        this.isReplayUiHidden = false;
+
+        this.previousPlayTime = 0;
+        this.previousHitErrorIndex = 0;
+
+        this.gradualPerformance = undefined;
+        // below is data that shouldn't be reseted on retry
+        if (isRetry === true) {
+            return;
+        }
+
+        this.isDefaultState = true;
+        this.retries = 0;
+        this.playerName = '';
+        this.mode = 0;
+        this.mods = Object.assign({}, defaultCalculatedMods);
+        this.isLeaderboardVisible = false;
+        this.leaderboardPlayer = Object.assign({}, defaultLBPlayer);
+        this.leaderboardScores = [];
+    }
+
+    resetQuick() {
+        wLogger.debug(
+            `%${ClientType[this.game.client]}%`,
+            `Quick reset of gameplay state`
+        );
+
+        this.previousPlayTime = 0;
+        this.gradualPerformance = undefined;
+    }
+
+    resetHitErrors() {
+        this.hitErrors = [];
+        this.totalHitErrors = 0;
+        this.previousHitErrorIndex = 0;
+    }
+
+    resetKeyOverlay() {
+        if (this.isKeyOverlayDefaultState) {
+            return;
+        }
+
+        wLogger.debug(
+            `%${ClientType[this.game.client]}%`,
+            `Resetting key overlay`
+        );
+
+        this.keyOverlay.forEach((key) => {
+            key.isPressed = false;
+            key.count = 0;
+        });
+
+        this.isKeyOverlayDefaultState = true;
+    }
+
+    @measureTime
+    updateState() {
+        try {
+            const menu = this.game.get('menu');
+            if (menu === null) {
+                return 'not-ready';
+            }
+
+            const result = this.game.memory.gameplay();
+            if (result instanceof Error) throw result;
+            if (typeof result === 'string') {
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `Gameplay state update not ready:`,
+                    result
+                );
+                return 'not-ready';
+            }
+
+            // Resetting default state value, to define other componenets that we have touched gameplay
+            // needed for ex like you done with replay watching/gameplay and return to mainMenu, you need alteast one reset to gameplay/resultScreen
+            this.isDefaultState = false;
+
+            this.failed = result.failed;
+
+            this.retries = result.retries;
+            this.playerName = result.playerName;
+            this.mods = result.mods;
+            this.mode = result.mode;
+            this.score = result.score;
+            this.playerHPSmooth = result.playerHPSmooth;
+            this.playerHP = result.playerHP;
+            this.accuracy = result.accuracy;
+
+            this.statistics = result.statistics;
+            this.maximumStatistics = result.maximumStatistics;
+
+            this.combo = result.combo;
+            this.maxCombo = result.maxCombo;
+
+            if (this.maxCombo > 0) {
+                const baseUR = this.calculateUR();
+                if (
+                    (this.mods.number & OsuMods.DoubleTime) ===
+                    OsuMods.DoubleTime
+                ) {
+                    this.unstableRate = baseUR / 1.5;
+                } else if (
+                    (this.mods.number & OsuMods.HalfTime) ===
+                    OsuMods.HalfTime
+                ) {
+                    this.unstableRate = baseUR * 1.33;
+                } else {
+                    this.unstableRate = baseUR;
+                }
+            }
+
+            if (this.comboPrev > this.maxCombo) {
+                this.comboPrev = 0;
+            }
+            if (
+                this.combo < this.comboPrev &&
+                this.statistics.miss === this.hitMissPrev
+            ) {
+                this.hitSB += 1;
+            }
+            this.hitMissPrev = this.statistics.miss;
+            this.comboPrev = this.combo;
+
+            this.updateGrade(menu.objectCount);
+            this.updateStarsAndPerformance();
+            this.updateLeaderboard();
+
+            this.game.resetReportCount('gameplay updateState');
+        } catch (exc) {
+            this.game.reportError(
+                'gameplay updateState',
+                10,
+                ClientType[this.game.client],
+                this.game.pid,
+                `gameplay updateState`,
+                (exc as any).message
+            );
+            wLogger.debug(
+                `%${ClientType[this.game.client]}%`,
+                `Error updating gameplay state:`,
+                exc
+            );
+        }
+    }
+
+    @measureTime
+    updateKeyOverlay() {
+        try {
+            const result = this.game.memory.keyOverlay(this.mode);
+            if (result instanceof Error) throw result;
+            if (typeof result === 'string') {
+                if (result === '') return;
+
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `Key overlay update not ready:`,
+                    result
+                );
+                return 'not-ready';
+            }
+
+            result.forEach((key) => {
+                if (key.count < 0 || key.count > 1_000_000) {
+                    key.isPressed = false;
+                    key.count = 0;
+                }
+            });
+
+            this.keyOverlay = result;
+            this.isKeyOverlayDefaultState = false;
+
+            const keysLine = result.map((key) => key.count).join(':');
+            if (this.cachedkeys !== keysLine) {
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `Key overlay counts updated:`,
+                    keysLine
+                );
+                this.cachedkeys = keysLine;
+            }
+
+            this.game.resetReportCount('gameplay updateKeyOverlay');
+        } catch (exc) {
+            this.game.reportError(
+                'gameplay updateKeyOverlay',
+                20,
+                ClientType[this.game.client],
+                this.game.pid,
+                `gameplay updateKeyOverlay`,
+                (exc as any).message
+            );
+            wLogger.debug(
+                `%${ClientType[this.game.client]}%`,
+                `Error updating key overlay:`,
+                exc
+            );
+        }
+    }
+
+    updateHitErrors() {
+        try {
+            const result = this.game.memory.hitErrors(
+                this.previousHitErrorIndex
+            );
+            if (result instanceof Error) throw result;
+            if (typeof result === 'string') {
+                if (result === '') return;
+
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `Hit errors update not ready:`,
+                    result
+                );
+
+                return 'not-ready';
+            }
+
+            for (const hit of result.array) {
+                this.hitErrors.push(hit);
+                this.totalHitErrors += hit;
+            }
+            this.previousHitErrorIndex = result.index;
+
+            this.game.resetReportCount('gameplay updateHitErrors');
+        } catch (exc) {
+            this.game.reportError(
+                'gameplay updateHitErrors',
+                50,
+                ClientType[this.game.client],
+                this.game.pid,
+                `gameplay updateHitErrors`,
+                (exc as any).message
+            );
+            wLogger.debug(
+                `%${ClientType[this.game.client]}%`,
+                `Error updating hit errors:`,
+                exc
+            );
+        }
+    }
+
+    private calculateUR(): number {
+        if (this.hitErrors.length < 1) {
+            return 0;
+        }
+
+        const average = this.totalHitErrors / this.hitErrors.length;
+        let variance = 0;
+        for (const hit of this.hitErrors) {
+            variance += Math.pow(hit - average, 2);
+        }
+        variance = variance / this.hitErrors.length;
+
+        return Math.sqrt(variance) * 10;
+    }
+
+    private updateGrade(objectCount: number) {
+        this.gradeCurrent = calculateGrade({
+            isLazer: this.game.client === ClientType.lazer,
+
+            mods: this.mods.array,
+            mode: this.mode,
+            accuracy: this.accuracy,
+
+            statistics: this.statistics
+        });
+
+        this.gradeExpected = calculateGrade({
+            isLazer: this.game.client === ClientType.lazer,
+
+            mods: this.mods.array,
+            mode: this.mode,
+            accuracy: this.accuracy,
+
+            statistics: Object.assign({}, this.statistics, {
+                great:
+                    this.statistics.great +
+                    objectCount -
+                    this.statistics.great -
+                    this.statistics.ok -
+                    this.statistics.meh -
+                    this.statistics.miss
+            } as Statistics)
+        });
+    }
+
+    @measureTime
+    private updateLeaderboard() {
+        try {
+            const result = this.game.memory.leaderboard(this.mode);
+            if (result instanceof Error) throw result;
+
+            this.isLeaderboardVisible = result[0];
+            this.leaderboardPlayer =
+                result[1] || Object.assign({}, defaultLBPlayer);
+            this.leaderboardScores = result[2];
+
+            this.game.resetReportCount('gameplay updateLeaderboard');
+        } catch (exc) {
+            this.game.reportError(
+                'gameplay updateLeaderboard',
+                10,
+                ClientType[this.game.client],
+                this.game.pid,
+                `gameplay updateLeaderboard`,
+                (exc as any).message
+            );
+            wLogger.debug(
+                `%${ClientType[this.game.client]}%`,
+                `Error updating leaderboard:`,
+                exc
+            );
+        }
+    }
+
+    @measureTime
+    private updateStarsAndPerformance() {
+        try {
+            if (!config.calculatePP) {
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `PP calculation disabled`
+                );
+                return;
+            }
+
+            const { global, beatmapPP, menu } = this.game.getServices([
+                'global',
+                'beatmapPP',
+                'menu'
+            ]);
+
+            if (!global.gameFolder) {
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `Game folder not found, skipping PP calc`
+                );
+                return;
+            }
+
+            const currentBeatmap = beatmapPP.getCurrentBeatmap();
+            if (
+                !currentBeatmap ||
+                !beatmapPP.difficultyAttributes ||
+                !beatmapPP.maxScore
+            ) {
+                wLogger.debug(
+                    `%${ClientType[this.game.client]}%`,
+                    `Current beatmap unavailable, skipping PP calc`
+                );
+                return;
+            }
+
+            const currentState = `${menu.checksum}:${menu.gamemode}:${this.mods.checksum}:${menu.mp3Length}`;
+            const isUpdate = this.previousState !== currentState;
+
+            // update precalculated attributes
+            if (isUpdate || !this.gradualPerformance) {
+                this.gradualPerformance =
+                    currentBeatmap.createGradualDifficulty();
+
+                this.previousState = currentState;
+            }
+
+            const timeOffset = global.playTime - this.previousPlayTime;
+            if (timeOffset <= 0) {
+                if (timeOffset === 0) return;
+
+                // Mostly for lazer replay, correct position on rewind
+                this.gradualPerformance =
+                    currentBeatmap.createGradualDifficulty();
+            }
+
+            const offset = this.gradualPerformance.skipToTime(global.playTime);
+            if (offset === 0) return;
+
+            const currDiffAttrs =
+                this.gradualPerformance.createDifficultyAttrs();
+
+            const scoreInfo: ScoreInfoData = {
+                totalScore: this.score,
+                isLegacyScore: this.game.client === ClientType.stable,
+                accuracy: 0.0,
+                maxCombo: this.maxCombo,
+                perfects: this.statistics.perfect,
+                greats: this.statistics.great,
+                goods: this.statistics.good,
+                oks: this.statistics.ok,
+                mehs: this.statistics.meh,
+                misses: this.statistics.miss,
+                sliderEndHits: this.statistics.sliderTailHit,
+                smallTickHits: this.statistics.smallTickHit,
+                smallTickMisses: this.statistics.smallTickMiss,
+                largeTickHits: this.statistics.largeTickHit,
+                largeTickMisses: this.statistics.largeTickMiss,
+                largeBonuses: this.statistics.largeBonus,
+                smallBonuses: this.statistics.smallBonus,
+                comboBreaks: this.statistics.comboBreak,
+                ignoreHits: this.statistics.ignoreHit,
+                ignoreMisses: this.statistics.ignoreMiss
+            };
+            // Do not trust client accuracy for performance calculation, calculate it based on hit results
+            scoreInfo.accuracy =
+                this.gradualPerformance.calculateProgressiveAccuracy(scoreInfo);
+
+            const currPerformance = currentBeatmap.calculatePerformance(
+                currDiffAttrs,
+                scoreInfo
+            );
+
+            const currDiff = currDiffAttrs.getData();
+            beatmapPP.updateCurrentAttributes(
+                currDiff.stars,
+                currPerformance.pp
+            );
+
+            beatmapPP.updatePPAttributes('curr', currPerformance);
+
+            const maxAchievablePerformance =
+                currentBeatmap.calculatePerformance(
+                    beatmapPP.difficultyAttributes,
+                    calculateMaxAchievableScore(
+                        currentBeatmap,
+                        this.combo,
+                        scoreInfo,
+                        currDiff,
+                        beatmapPP.maxScore,
+                        beatmapPP.difficultyAttributes.getData()
+                    )
+                );
+
+            beatmapPP.currAttributes.maxAchievable =
+                maxAchievablePerformance.pp;
+
+            const fcPerformance = currentBeatmap.calculatePerformance(
+                beatmapPP.difficultyAttributes,
+                calculateFcScore(
+                    currentBeatmap,
+                    scoreInfo,
+                    currDiff,
+                    beatmapPP.maxScore
+                )
+            );
+            beatmapPP.currAttributes.fcPP = fcPerformance.pp;
+            beatmapPP.updatePPAttributes('fc', fcPerformance);
+
+            this.previousPlayTime = global.playTime;
+
+            this.game.resetReportCount('gameplay updateStarsAndPerformance');
+        } catch (exc) {
+            this.game.reportError(
+                'gameplay updateStarsAndPerformance',
+                10,
+                ClientType[this.game.client],
+                this.game.pid,
+                `gameplay updateStarsAndPerformance`,
+                (exc as any).message
+            );
+            wLogger.debug(
+                `%${ClientType[this.game.client]}%`,
+                `Error in PP calculation loop:`,
+                exc
+            );
+        }
+    }
+}

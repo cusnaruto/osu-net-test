@@ -1,0 +1,11 @@
+{
+  "assets": [
+    "dist/**/*.node",
+    "dist/**/*.wasm",
+    "dist/assets/**/*"
+  ],
+  "targets": [
+    "node24-win-x64"
+  ],
+  "outputPath": "dist"
+}

@@ -1,0 +1,17 @@
+.env
+tosu.env
+tsosu.env
+dist/
+node_modules
+yarn-error.log
+static/
+package-lock.json
+config.ini
+tosu.exe
+_version.js
+**/tosu/gameOverlay/
+**/tosu/game-overlay/
+**/tosu/.cache/
+logs/
+settings/
+packages/server/assets/homepage.min.css

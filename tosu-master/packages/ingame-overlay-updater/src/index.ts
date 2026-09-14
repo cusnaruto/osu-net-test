@@ -1,0 +1,144 @@
+import {
+    checkGameOverlayConfig,
+    context,
+    downloadFile,
+    getProgramPath,
+    platformResolver,
+    unzip,
+    verifyDownload,
+    wLogger
+} from '@tosu/common';
+import {
+    ChildProcess,
+    type ChildProcessByStdio,
+    spawn
+} from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { Readable } from 'node:stream';
+
+const platform = platformResolver(process.platform);
+
+export async function runOverlay(): Promise<ChildProcess | Error> {
+    try {
+        if (process.platform !== 'win32') {
+            throw new Error(
+                'This feature is currently only available on the Windows platform'
+            );
+        }
+
+        await checkGameOverlayConfig();
+
+        const gameOverlayPath = path.join(getProgramPath(), 'game-overlay');
+        if (
+            existsSync(path.join(gameOverlayPath)) &&
+            !existsSync(path.join(gameOverlayPath, 'version'))
+        ) {
+            // old overlay detected, removing it
+            wLogger.warn('Old in-game overlay version detected. Removing...');
+            await rm(gameOverlayPath, { recursive: true, force: true });
+        }
+
+        if (existsSync(path.join(gameOverlayPath, 'version'))) {
+            const overlayVersion = readFileSync(
+                path.join(gameOverlayPath, 'version'),
+                'utf8'
+            );
+            if (overlayVersion.trimEnd() !== context.currentVersion) {
+                await rm(gameOverlayPath, { recursive: true, force: true });
+
+                wLogger.warn('In-game overlay update available. Updating...');
+            }
+        }
+
+        if (!existsSync(gameOverlayPath)) {
+            const archivePath = path.join(
+                gameOverlayPath,
+                'tosu-gameoverlay.zip'
+            );
+
+            await mkdir(gameOverlayPath, { recursive: true });
+
+            const request = await fetch(
+                `https://api.github.com/repos/tosuapp/tosu/releases/tags/v${context.currentVersion}`
+            );
+            const json = (await request.json()) as any;
+            const {
+                assets
+            }: {
+                assets: {
+                    name: string;
+                    digest: `${string}:${string}`;
+                    browser_download_url: string;
+                }[];
+            } = json;
+
+            const findAsset = assets.find(
+                (r) =>
+                    r.name.includes('tosu-overlay') && r.name.endsWith('.zip')
+            );
+            if (!findAsset) {
+                throw new Error(
+                    `Could not find downloadable files for your operating system. (${platform.type})`
+                );
+            }
+
+            await downloadFile(findAsset.browser_download_url, archivePath);
+
+            const verify = await verifyDownload(findAsset.digest, archivePath);
+            if (verify === false) {
+                await rm(archivePath);
+                return new Error('Unable to verify downloaded executable');
+            }
+
+            await unzip(archivePath, gameOverlayPath);
+            await rm(archivePath);
+
+            wLogger.info('In-game overlay installed successfully');
+        }
+
+        wLogger.warn(`Launching in-game overlay...`);
+
+        const child = spawn(
+            path.join(gameOverlayPath, 'tosu-ingame-overlay.exe'),
+            [],
+            {
+                detached: false,
+                stdio: ['ignore', 'overlapped', 'overlapped', 'ipc'],
+                windowsHide: true,
+                shell: false,
+                env: {
+                    // Force nvidia optimus to prefer dedicated gpu
+                    SHIM_MCCOMPAT: '0x800000001',
+                    // Force ipc fd to 3 just in case
+                    NODE_CHANNEL_FD: '3',
+                    ...process.env
+                }
+            }
+        ) as ChildProcessByStdio<null, Readable, Readable>;
+        if (!child.channel) {
+            throw new Error(`Could not spawn overlay process with Ipc`);
+        }
+
+        child.stdout.setEncoding('utf-8').on('data', (data: string) => {
+            // overlay logs are a bit verbose, so redirect them to debug log
+            data = data.trim();
+
+            if (data.startsWith('info:'))
+                wLogger.info(data.replace('info:', '').trim());
+            else if (data.startsWith('warn:'))
+                wLogger.warn(data.replace('warn:', '').trim());
+            else wLogger.debug(`Overlay Output:`, data.trim());
+        });
+
+        child.stderr.setEncoding('utf-8').on('data', (data: string) => {
+            // redirect overlay error backtraces to debug error log
+            wLogger.error('Overlay Error:', data.trim());
+        });
+
+        return child;
+    } catch (error) {
+        return error as Error;
+    }
+}

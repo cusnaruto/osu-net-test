@@ -15,8 +15,6 @@ PLAYFIELD_W = 512
 PLAYFIELD_H = 384
 dt = 1000 / 60
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 # --- HELPER FUNCTIONS ---
 def to_ms(t):
     if hasattr(t, 'total_seconds'): return t.total_seconds() * 1000
@@ -267,45 +265,45 @@ def process_pair(replay_path, beatmap_path, is_perfect=True, min_length=190):
         return None
 
 
-# --- MAIN EXECUTION ---
+def run_training_pipeline():
+    """Process the configured replay dataset when explicitly requested."""
+    train_seq_len = 180
+    min_segment_len = train_seq_len + 10
 
-# DEFINE YOUR TRAINING SEQ_LEN HERE
-TRAIN_SEQ_LEN = 180
-# Set buffer slightly higher so we have wiggle room for random sampling
-MIN_SEGMENT_LEN = TRAIN_SEQ_LEN + 10
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    df = pd.read_csv(CSV_PATH)
+    subset = df.head(30000)
 
-df = pd.read_csv(CSV_PATH)
-subset = df.head(30000)
+    print(f"Processing {len(subset)} replays...")
 
-print(f"Processing {len(subset)} replays...")
+    processed_count = 0
 
-processed_count = 0
+    for _, row in subset.iterrows():
+        r_hash = row['replayHash']
+        b_hash = row['beatmapHash']
 
-for index, row in subset.iterrows():
-    r_hash = row['replayHash']
-    b_hash = row['beatmapHash']
+        is_fc = row['performance-IsFC']
+        if isinstance(is_fc, str):
+            is_fc = is_fc.lower() == 'true'
 
-    # 1. Get FC Status
-    is_fc = row['performance-IsFC']
-    if isinstance(is_fc, str):
-        is_fc = (is_fc.lower() == 'true')
+        r_path = os.path.join(REPLAY_DIR, f"{r_hash}.osr")
+        b_path = os.path.join(BEATMAP_DIR, f"{b_hash}.osu")
 
-    r_path = os.path.join(REPLAY_DIR, f"{r_hash}.osr")
-    b_path = os.path.join(BEATMAP_DIR, f"{b_hash}.osu")
+        if os.path.exists(r_path) and os.path.exists(b_path):
+            segments = process_pair(r_path, b_path, is_perfect=is_fc, min_length=min_segment_len)
 
-    if os.path.exists(r_path) and os.path.exists(b_path):
-        segments = process_pair(r_path, b_path, is_perfect=is_fc, min_length=MIN_SEGMENT_LEN)
+            if segments:
+                for part_index, (features, labels) in enumerate(segments):
+                    save_path = os.path.join(OUTPUT_DIR, f"data_{processed_count}_part{part_index}.npz")
+                    np.savez_compressed(save_path, features=features, labels=labels)
 
-        if segments:
-            for i, (X, Y) in enumerate(segments):
+                processed_count += 1
 
-                save_path = os.path.join(OUTPUT_DIR, f"data_{processed_count}_part{i}.npz")
+                if processed_count % 100 == 0:
+                    print(f"Processed {processed_count} replays...")
 
-                np.savez_compressed(save_path, features=X, labels=Y)
+    print("Done.")
 
-            processed_count += 1
 
-            if processed_count % 100 == 0:
-                print(f"Processed {processed_count} replays...")
-
-print("Done.")
+if __name__ == "__main__":
+    run_training_pipeline()

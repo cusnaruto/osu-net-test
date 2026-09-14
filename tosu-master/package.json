@@ -1,0 +1,57 @@
+{
+  "author": "Mikhail Babynichev",
+  "license": "GPL-3.0",
+  "version": "4.26.2",
+  "packageManager": "pnpm@10.10.0",
+  "scripts": {
+    "prepare": "husky install",
+    "start": "pnpm run -C packages/tosu run:dev",
+    "watch": "pnpm run -C packages/tosu watch",
+    "build:win": "pnpm run -C packages/tosu compile:win",
+    "build:linux": "pnpm run -C packages/tosu compile:linux",
+    "build:overlay": "pnpm run -C \"packages/ingame-overlay\" dist",
+    "release": "commit-and-tag-version",
+    "prettier:fix": "prettier --write \"**/*.{js,jsx,ts,tsx,css}\"",
+    "prettier:ci": "prettier --check \"**/*.{js,jsx,ts,tsx,css}\"",
+    "lint:ci": "eslint --ext .ts,.d.ts .",
+    "lint:fix": "eslint --fix --ext .ts,.d.ts ."
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
+    "@eslint/js": "^9.39.5",
+    "@trivago/prettier-plugin-sort-imports": "^5.2.2",
+    "@types/node": "^24.10.4",
+    "@typescript-eslint/eslint-plugin": "^8.66.0",
+    "@typescript-eslint/parser": "^8.66.0",
+    "commit-and-tag-version": "^13.1.2",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^17.23.1",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-promise": "^7.2.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "prettier": "^3.7.4",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^6.0.3"
+  },
+  "lint-staged": {
+    "**/*.{js,ts}": [
+      "pnpm run prettier:fix",
+      "pnpm run lint:fix"
+    ]
+  },
+  "homepage": "https://github.com/tosuapp/tosu#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tosuapp/tosu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tosuapp/tosu/issues"
+  },
+  "engines": {
+    "node": ">=24.14.0 <25.0.0"
+  }
+}

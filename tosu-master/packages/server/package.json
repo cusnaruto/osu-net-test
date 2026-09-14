@@ -1,0 +1,26 @@
+{
+  "name": "@tosu/server",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "",
+  "author": "cyperdark",
+  "main": "index.ts",
+  "scripts": {
+    "prepare": "sass --style compressed --no-source-map ./assets/homepage.scss ./assets/homepage.min.css && postcss ./assets/homepage.min.css -o ./assets/homepage.min.css --use autoprefixer --no-map"
+  },
+  "dependencies": {
+    "@tosu/common": "workspace:*",
+    "@tosu/updater": "workspace:*",
+    "rosu-pp-js": "4.0.1",
+    "semver": "^7.7.3",
+    "systeminformation": "^5.31.14",
+    "ws": "^8.21.2"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.7.1",
+    "@types/ws": "^8.18.1",
+    "autoprefixer": "^10.4.23",
+    "postcss-cli": "^11.0.1",
+    "sass": "^1.102.0"
+  }
+}

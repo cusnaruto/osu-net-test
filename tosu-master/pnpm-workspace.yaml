@@ -1,0 +1,6 @@
+packages:
+  - packages/*
+onlyBuiltDependencies:
+  - '@tosuapp/lazer-calculator'
+  - electron
+  - esbuild
