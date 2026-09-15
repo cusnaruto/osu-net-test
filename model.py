@@ -3,7 +3,7 @@ import pandas as pd
 import torch.nn as nn
 
 class OsuAimModel(nn.Module):
-    def __init__(self, input_size=10, hidden_size=512, num_layers=3):
+    def __init__(self, input_size=10, hidden_size=256, num_layers=3):
         super(OsuAimModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
